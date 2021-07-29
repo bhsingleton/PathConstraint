@@ -1,0 +1,39 @@
+global proc AEpathConstraintTemplate(string $nodeName)
+{
+    
+    editorTemplate -beginScrollLayout;
+        
+        AEtransformMain($nodeName);
+        AEtransformNoScroll($nodeName);
+        
+        editorTemplate -beginLayout "Constraint Attributes" -collapse false;
+
+		    editorTemplate -addControl "lockOutput";
+            editorTemplate -addControl "constraintTranslate";
+            editorTemplate -addControl "constraintRotate";
+            editorTemplate -addControl "enableRestPosition";
+			editorTemplate -addControl "restTranslate";
+			editorTemplate -addControl "restRotate";
+			
+			editorTemplate -addControl "uValue";
+			
+            editorTemplate -addControl "forwardAxis";
+			editorTemplate -addControl "forwardTwist";
+			
+			editorTemplate -addControl "upAxis";
+			editorTemplate -addControl "worldUpType";
+			editorTemplate -addControl "worldUpVector";
+			
+		editorTemplate -endLayout;
+
+        editorTemplate -addExtraControls;
+		
+		editorTemplate -suppress "target";
+		editorTemplate -suppress "worldUpMatrix";
+		editorTemplate -suppress "constraintObject";
+		editorTemplate -suppress "constraintRotateOrder";
+		editorTemplate -suppress "constraintParentInverseMatrix";
+        
+    editorTemplate -endScrollLayout;
+    
+}
