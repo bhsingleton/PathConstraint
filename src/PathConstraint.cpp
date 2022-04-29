@@ -50,7 +50,7 @@ MObject PathConstraint::constraintWorldInverseMatrix;
 MObject PathConstraint::constraintParentInverseMatrix;
 MObject PathConstraint::constraintObject;
 
-MTypeId PathConstraint::id(0x00131805);
+MTypeId PathConstraint::id(0x0013b1c3);
 MString	PathConstraint::targetCategory("Target");
 MString	PathConstraint::outputCategory("Output");
 
