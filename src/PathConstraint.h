@@ -3,27 +3,26 @@
 //
 // File: PathConstraint.h
 //
-// Dependency Graph Node: PathConstraint
+// Dependency Graph Node: pathConstraint
 //
-// Author: Ben Singleton
+// Author: Benjamin H. Singleton
 //
 
 #include <maya/MPxConstraint.h>
-#include <maya/MTypeId.h> 
 #include <maya/MObject.h>
-#include <maya/MObjectArray.h>
-#include <maya/MObjectHandle.h>
-#include <maya/MPlug.h>
-#include <maya/MPlugArray.h>
-#include <maya/MDagPath.h>
 #include <maya/MDataBlock.h>
+#include <maya/MDataHandle.h>
+#include <maya/MArrayDataHandle.h>
+#include <maya/MPlug.h>
 #include <maya/MDistance.h>
 #include <maya/MAngle.h>
 #include <maya/MQuaternion.h>
+#include <maya/MEulerRotation.h>
 #include <maya/MFloatArray.h>
+#include <maya/MVector.h>
+#include <maya/MPoint.h>
 #include <maya/MMatrix.h>
 #include <maya/MMatrixArray.h>
-#include <maya/MFnMatrixData.h>
 #include <maya/MFnNurbsCurve.h>
 #include <maya/MFnCompoundAttribute.h>
 #include <maya/MFnNumericAttribute.h>
@@ -32,14 +31,19 @@
 #include <maya/MFnMatrixAttribute.h>
 #include <maya/MFnEnumAttribute.h>
 #include <maya/MFnMessageAttribute.h>
+#include <maya/MString.h>
+#include <maya/MTypeId.h> 
 #include <maya/MGlobal.h>
-#include <maya/MDagMessage.h>
-#include <maya/MDagModifier.h>
-#include <maya/MCallbackIdArray.h>
 
-#include <iostream>
-#include <map>
-#include <cmath>
+
+struct WorldUpSettings
+{
+
+	int			worldUpType;
+	MVector		worldUpVector;
+	MMatrix		worldUpMatrix;
+
+};
 
  
 class PathConstraint : public MPxConstraint
@@ -54,51 +58,33 @@ public:
 
 	static  void*			creator();
 	static  MStatus			initialize();
-	virtual	void			postConstructor();
-	virtual	long			hashCode();
-
-	virtual	MStatus			legalConnection(const MPlug& plug, const MPlug& otherPlug, bool asSrc, bool& isLegal);
-	virtual	MStatus			connectionMade(const MPlug& plug, const MPlug& otherPlug, bool asSrc);
-	virtual	MStatus			connectionBroken(const MPlug& plug, const MPlug& otherPlug, bool asSrc);
-
-	static	MStatus			connectPlugs(MPlug& source, MPlug& destination);
-	static	MStatus			disconnectPlugs(MPlug& source, MPlug& destination);
-	static	MStatus			breakConnections(MPlug& plug, bool source, bool destination);
 
 	const	MObject			targetAttribute() const override;
 	const	MObject			weightAttribute() const override;
 	const	MObject			constraintRotateOrderAttribute() const override;
 
-	virtual	MStatus			updateConstraintParentInverseMatrix();
+	static	MMatrix			createPositionMatrix(const MVector& position);
+	static	MStatus			createRotationMatrix(const int forwardAxis, const MAngle& angle, MMatrix& matrix);
 
-	static	MDagPath		getAPathTo(MObject& dependNode);
-	static	MObject			getParentOf(MObject& dependNode);
+	static	MStatus			sampleCurveAtParameter(const MObject& curve, const double parameter, const WorldUpSettings& settings, MPoint& position, MVector& forwardVector, MVector& upVector);
+	static	MStatus			getForwardVector(const MObject& curve, const double parameter, MVector& forwardVector);
+	static	MStatus			getUpVector(const MObject& curve, const double parameter, const WorldUpSettings& settings, const MVector& position, MVector& upVector);
+	static	MVector			getObjectRotationUpVector(const MVector& worldUpVector, const MMatrix& worldUpMatrix);
+	static	MStatus			getCurvePoint(const MObject& curve, const double parameter, MPoint& point);
+	static	MStatus			getCurveNormal(const MObject& curve, const double parameter, MVector& upVector);
+	static	MStatus			getParamFromFraction(const MObject& curve, const double fraction, double& parameter);
 
-	static	MObject			createMatrixData(MMatrix matrix);
-	static	MMatrix			getMatrixData(MObject& matrixData);
+	static	MStatus			composeMatrix(const int forwardAxis, const MVector& forwardVector, const int upAxis, const MVector& upVector, const MPoint& position, MMatrix &matrix);
+	static	MMatrix			composeMatrix(const MVector& xAxis, const MVector& yAxis, const MVector& zAxis, const MPoint& position);
 
-	static	MMatrix			createPositionMatrix(MVector position);
-	static	MStatus			createRotationMatrix(int forwardAxis, MAngle angle, MMatrix& matrx);
+	static	MMatrix			blendMatrices(const MMatrix& startMatrix, const MMatrix& endMatrix, const float weight);
+	static	MMatrix			blendMatrices(const MMatrix& restMatrix, const MMatrixArray& matrices, const MFloatArray& weights);
 
-	virtual	MStatus			getUpVector(MDataBlock& data, double parameter, MObject& curve, MVector& upVector);
-	static	MStatus			getForwardVector(MObject& curve, double parameter, MVector& forwardVector);
-	static	MVector			getSceneUpVector();
-	virtual	MVector			getObjectUpVector(MMatrix worldUpMatrix);
-	static	MVector			getObjectRotationUpVector(MMatrix worldUpMatrix, MVector worldUpVector);
-	static	MStatus			getCurvePoint(MObject& curve, double parameter, MPoint& point);
-	static	MStatus			getCurveNormal(MObject& curve, double parameter, MVector& upVector);
-	static	MStatus			getParamFromFraction(MObject& curve, double fraction, double& parameter);
+	static	float			sum(const MFloatArray& items);
 
-	static	MStatus			composeMatrix(int forwardAxis, MVector forwardVector, int upAxis, MVector upVector, MPoint position, MMatrix &matrix);
-	static	MMatrix			composeMatrix(MVector x, MVector y, MVector z, MPoint p);
-
-	static	MMatrix			blendMatrices(MMatrix startMatrix, MMatrix endMatrix, float weight);
-	static	MMatrix			blendMatrices(MMatrix restMatrix, MMatrixArray matrices, MFloatArray weights);
-
-	static	float			sum(MFloatArray items);
-
-	static	MQuaternion		slerp(MQuaternion startQuat, MQuaternion endQuat, float weight);
-	static	MFloatArray		clamp(MFloatArray items);
+	static	double			dot(const MQuaternion& quat, const MQuaternion& otherQuat);
+	static	MQuaternion		slerp(const MQuaternion& startQuat, const MQuaternion& endQuat, const float weight);
+	static	MFloatArray		clamp(const MFloatArray& items);
 	static	double			clamp(double value, double min, double max);
 
 public:
@@ -141,30 +127,22 @@ public:
 	static	MObject		constraintTranslateX;
 	static	MObject		constraintTranslateY;
 	static	MObject		constraintTranslateZ;
-
 	static	MObject		constraintRotate;
 	static	MObject		constraintRotateX;
 	static	MObject		constraintRotateY;
 	static	MObject		constraintRotateZ;
 	static	MObject		constraintRotateOrder;
-
 	static	MObject		constraintMatrix;
 	static	MObject		constraintInverseMatrix;
 	static	MObject		constraintWorldMatrix;
 	static	MObject		constraintWorldInverseMatrix;
 	static	MObject		constraintParentInverseMatrix;
-	static	MObject		constraintObject;
 
 public:
 
 	static	MTypeId			id;
 	static	MString			outputCategory;
 	static	MString			targetCategory;
-
-			MObjectHandle	constraintHandle;
-	static	MCallbackId		childAddedCallbackId;
-
-	static	std::map<long, PathConstraint*>	instances;
 
 };
 

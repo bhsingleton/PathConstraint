@@ -3,7 +3,7 @@
 //
 // Dependency Graph Node: PathConstraint
 //
-// Author: Ben Singleton
+// Author: Benjamin H. Singleton
 //
 
 #include "PathConstraint.h"
@@ -17,6 +17,15 @@ MObject PathConstraint::restRotate;
 MObject PathConstraint::restRotateX;
 MObject PathConstraint::restRotateY;
 MObject PathConstraint::restRotateZ;
+
+MObject PathConstraint::offsetTranslate;
+MObject PathConstraint::offsetTranslateX;
+MObject PathConstraint::offsetTranslateY;
+MObject PathConstraint::offsetTranslateZ;
+MObject PathConstraint::offsetRotate;
+MObject PathConstraint::offsetRotateX;
+MObject PathConstraint::offsetRotateY;
+MObject PathConstraint::offsetRotateZ;
 
 MObject PathConstraint::uValue;
 MObject PathConstraint::fractionMode;
@@ -48,28 +57,14 @@ MObject PathConstraint::constraintInverseMatrix;
 MObject PathConstraint::constraintWorldMatrix;
 MObject PathConstraint::constraintWorldInverseMatrix;
 MObject PathConstraint::constraintParentInverseMatrix;
-MObject PathConstraint::constraintObject;
 
 MTypeId PathConstraint::id(0x0013b1c3);
 MString	PathConstraint::targetCategory("Target");
 MString	PathConstraint::outputCategory("Output");
 
-std::map<long, PathConstraint*> PathConstraint::instances = std::map<long, PathConstraint*>();
-MCallbackId	PathConstraint::childAddedCallbackId;
-
 
 PathConstraint::PathConstraint() {}
-
-
-PathConstraint::~PathConstraint()
-/**
-Destructor.
-*/
-{
-
-	this->instances.erase(this->hashCode());
-
-};
+PathConstraint::~PathConstraint(){};
 
 
 MStatus PathConstraint::compute(const MPlug& plug, MDataBlock& data)
@@ -107,6 +102,12 @@ Only these values should be used when performing computations!
 		MDataHandle restRotateHandle = data.inputValue(PathConstraint::restRotate, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
+		MDataHandle offsetTranslateHandle = data.inputValue(PathConstraint::offsetTranslate, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
+		MDataHandle offsetRotateHandle = data.inputValue(PathConstraint::offsetRotate, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
 		MDataHandle constraintParentInverseMatrixHandle = data.inputValue(PathConstraint::constraintParentInverseMatrix, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
@@ -131,25 +132,41 @@ Only these values should be used when performing computations!
 		MDataHandle upAxisHandle = data.inputValue(PathConstraint::upAxis, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
+		MDataHandle worldUpTypeHandle = data.inputValue(PathConstraint::worldUpType, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
+		MDataHandle worldUpVectorHandle = data.inputValue(PathConstraint::worldUpVector, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
+		MDataHandle worldUpMatrixHandle = data.inputValue(PathConstraint::worldUpMatrix, &status);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
+
 		// Get values from handles
 		//
-		MMatrix constraintParentInverseMatrix = constraintParentInverseMatrixHandle.asMatrix();
-
-		MVector restTranslate = restTranslateHandle.asVector();
-		int constraintRotateOrder = constraintRotateOrderHandle.asInt();
-		MEulerRotation restRotate = MEulerRotation(restRotateHandle.asVector(), MEulerRotation::RotationOrder(constraintRotateOrder));
-
-		MMatrix restTranslateMatrix = PathConstraint::createPositionMatrix(restTranslate);
-		MMatrix restRotateMatrix = restRotate.asMatrix();
-
-		MMatrix restMatrix = restRotateMatrix * restTranslateMatrix;
-		MMatrix restWorldMatrix = restMatrix * constraintParentInverseMatrix.inverse();
-
 		double uValue = uValueHandle.asDouble();
 		bool fractionMode = fractionModeHandle.asBool();
 		int forwardAxis = forwardAxisHandle.asShort();
 		MAngle forwardTwist = forwardTwistHandle.asAngle();
 		int upAxis = upAxisHandle.asShort();
+		int worldUpType = worldUpTypeHandle.asShort();
+		MVector worldUpVector = worldUpVectorHandle.asVector();
+		MMatrix worldUpMatrix = worldUpMatrixHandle.asMatrix();
+		WorldUpSettings worldUpSettings = { worldUpType, worldUpVector, worldUpMatrix };
+		MMatrix constraintParentInverseMatrix = constraintParentInverseMatrixHandle.asMatrix();
+		int constraintRotateOrder = constraintRotateOrderHandle.asInt();
+
+		MVector restTranslate = restTranslateHandle.asVector();
+		MEulerRotation restRotate = MEulerRotation(restRotateHandle.asVector(), MEulerRotation::RotationOrder(constraintRotateOrder));
+		MMatrix restTranslateMatrix = PathConstraint::createPositionMatrix(restTranslate);
+		MMatrix restRotateMatrix = restRotate.asMatrix();
+		MMatrix restMatrix = restRotateMatrix * restTranslateMatrix;
+		MMatrix restWorldMatrix = restMatrix * constraintParentInverseMatrix.inverse();
+
+		MVector offsetTranslate = offsetTranslateHandle.asVector();
+		MEulerRotation offsetRotate = MEulerRotation(offsetRotateHandle.asVector(), MEulerRotation::RotationOrder(constraintRotateOrder));
+		MMatrix offsetTranslateMatrix = PathConstraint::createPositionMatrix(offsetTranslate);
+		MMatrix offsetRotateMatrix = offsetRotate.asMatrix();
+		MMatrix offsetMatrix = offsetRotateMatrix * offsetTranslateMatrix;
 
 		// Create forward twist matrix
 		//
@@ -158,15 +175,16 @@ Only these values should be used when performing computations!
 		status = PathConstraint::createRotationMatrix(forwardAxis, forwardTwist, forwardTwistMatrix);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
 
-		// Collect target matrices
+		// Initialize target matrices
 		//
 		unsigned int targetCount = targetArrayHandle.elementCount();
 
 		MFloatArray targetWeights = MFloatArray(targetCount);
 		MMatrixArray targetMatrices = MMatrixArray(targetCount);
 
-		MDataHandle targetHandle;
-		MDataHandle targetWeightHandle, targetCurveHandle;
+		// Iterate through targets
+		//
+		MDataHandle targetHandle, targetWeightHandle, targetCurveHandle;
 
 		MObject targetCurve;
 		double parameter;
@@ -207,15 +225,9 @@ Only these values should be used when performing computations!
 				
 			}
 
-			// Get forward/up vectors
+			// Sample curve at parameter
 			//
-			status = PathConstraint::getCurvePoint(targetCurve, parameter, position);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-			status = PathConstraint::getForwardVector(targetCurve, parameter, forwardVector);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-			status = this->getUpVector(data, parameter, targetCurve, upVector);
+			status = PathConstraint::sampleCurveAtParameter(targetCurve, parameter, worldUpSettings, position, forwardVector, upVector);
 			CHECK_MSTATUS_AND_RETURN_IT(status);
 
 			// Compose transform matrix
@@ -226,6 +238,11 @@ Only these values should be used when performing computations!
 			targetMatrices[i] = forwardTwistMatrix * targetMatrix;
 
 		}
+
+		// Calculate weighted constraint matrix
+		//
+		MMatrix constraintWorldMatrix = offsetMatrix * PathConstraint::blendMatrices(restWorldMatrix, targetMatrices, targetWeights);
+		MMatrix constraintMatrix = constraintWorldMatrix * constraintParentInverseMatrix;
 
 		// Get output data handles
 		//
@@ -258,16 +275,14 @@ Only these values should be used when performing computations!
 
 		MDataHandle constraintWorldInverseMatrixHandle = data.outputValue(PathConstraint::constraintWorldInverseMatrix, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		// Compute weighted constraint matrix
-		//
-		MMatrix constraintWorldMatrix = PathConstraint::blendMatrices(restWorldMatrix, targetMatrices, targetWeights);
-		MMatrix constraintMatrix = constraintWorldMatrix * constraintParentInverseMatrix;
-
-		// Set translation constraint
+		
+		// Update constraint translation
 		//
 		MTransformationMatrix transformationMatrix = MTransformationMatrix(MMatrix(constraintMatrix));
-		transformationMatrix.reorderRotation(MTransformationMatrix::RotationOrder(constraintRotateOrder + 1));
+		MTransformationMatrix::RotationOrder rotationOrder = MTransformationMatrix::RotationOrder(constraintRotateOrder + 1);  // Don't forget MEulerRotation::RotationOrder and MTransformationMatrix::RotationOrder aren't identical!
+		
+		status = transformationMatrix.reorderRotation(rotationOrder);
+		CHECK_MSTATUS_AND_RETURN_IT(status);
 
 		MVector constraintTranslate = transformationMatrix.getTranslation(MSpace::kTransform, &status);
 		CHECK_MSTATUS_AND_RETURN_IT(status);
@@ -282,7 +297,7 @@ Only these values should be used when performing computations!
 		constraintTranslateYHandle.setClean();
 		constraintTranslateZHandle.setClean();
 
-		// Set rotation constraint
+		// Update constraint rotation
 		//
 		MEulerRotation constraintRotate = transformationMatrix.eulerRotation();
 
@@ -294,7 +309,7 @@ Only these values should be used when performing computations!
 		constraintRotateYHandle.setClean();
 		constraintRotateZHandle.setClean();
 
-		// Commit matrices to handles
+		// Update constraint matrices
 		//
 		constraintMatrixHandle.setMMatrix(constraintMatrix);
 		constraintInverseMatrixHandle.setMMatrix(constraintMatrix.inverse());
@@ -314,463 +329,17 @@ Only these values should be used when performing computations!
 		return MS::kSuccess;
 
 	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-void onChildAdded(MDagPath& child, MDagPath& parent, void* clientData)
-/**
-Child added callback function.
-This function will handle updating the constraint's parent handle.
-
-@param child: The newly added child.
-@param parent: The parent owner.
-@param clientData: Pointer to any client data passed on creation.
-@return: void
-*/
-{
-
-	MStatus status;
-
-	// Iterate through instances
-	//
-	std::map<long, PathConstraint*>::iterator iter;
-
-	long hashCode;
-	PathConstraint* constraint;
-
-	for (iter = PathConstraint::instances.begin(); iter != PathConstraint::instances.end(); iter++)
-	{
-
-		// Check if child is derived from constraint
-		//
-		hashCode = iter->first;
-		constraint = iter->second;
-
-		if (constraint->constraintHandle.object() == child.node())
-		{
-
-			status = constraint->updateConstraintParentInverseMatrix();
-			CHECK_MSTATUS(status);
-
-		}
-
-	}
-
-};
-
-
-MStatus PathConstraint::legalConnection(const MPlug& plug, const MPlug& otherPlug, bool asSrc, bool& isLegal)
-/**
-This method allows you to check for legal connections being made to attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection if you are unable to determine if it is legal.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@param isLegal: Set this to true if the connection is legal otherwise false.
-@return: MStatus
-*/
-{
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-
-	if (attribute == PathConstraint::constraintObject && !asSrc)
-	{
-
-		// Verify other node is a dag node
-		//
-		MObject otherNode = otherPlug.node();
-		MObject otherAttribute = otherPlug.attribute();
-
-		if (otherNode.hasFn(MFn::kDagNode) && otherAttribute.hasFn(MFn::kMessageAttribute))
-		{
-
-			isLegal = true;
-
-		}
-		else
-		{
-
-			isLegal = false;
-
-		}
-
-		return MS::kSuccess;
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus PathConstraint::connectionMade(const MPlug& plug, const MPlug& otherPlug, bool asSrc)
-/**
-This method gets called when connections are made to attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection or if you want maya to process the connection as well.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@return: MStatus
-*/
-{
-
-	MStatus status;
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-
-	if (attribute == PathConstraint::constraintObject && !asSrc)
-	{
-
-		this->constraintHandle = MObjectHandle(otherPlug.node());
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus PathConstraint::connectionBroken(const MPlug& plug, const MPlug& otherPlug, bool asSrc)
-/**
-This method gets called when connections are broken with attributes of this node.
-You should return kUnknownParameter to specify that maya should handle this connection or if you want maya to process the connection as well.
-
-@param plug: Attribute on this node.
-@param otherPlug: Attribute on other node.
-@param asSrc: Is this plug a source of the connection.
-@return: MStatus
-*/
-{
-
-	MStatus status;
-
-	// Check the plug attribute
-	//
-	MObject attribute = plug.attribute();
-
-	if (attribute == PathConstraint::constraintObject && !asSrc)
-	{
-
-		this->constraintHandle = MObjectHandle();
-
-	}
-
-	return MS::kUnknownParameter;
-
-};
-
-
-MStatus PathConstraint::connectPlugs(MPlug& source, MPlug& destination)
-/**
-Connects the two supplied plugs.
-
-@param source: The source plug.
-@param destination: The destination plug.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if plugs are valid
-	//
-	if (source.isNull() || destination.isNull())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	// Execute dag modifier
-	//
-	MDagModifier dagModifier;
-
-	status = dagModifier.connect(source, destination);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	return dagModifier.doIt();
-
-};
-
-
-MStatus PathConstraint::disconnectPlugs(MPlug& source, MPlug& destination)
-/**
-Disconnects the two supplied plugs.
-
-@param source: The source plug.
-@param destination: The destination plug.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if plugs are valid
-	//
-	if (source.isNull() || destination.isNull())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	// Execute dag modifier
-	//
-	MDagModifier dagModifier;
-
-	status = dagModifier.disconnect(source, destination);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	return dagModifier.doIt();
-
-};
-
-
-MStatus PathConstraint::breakConnections(MPlug& plug, bool source, bool destination)
-/**
-Breaks the specified connections from the supplied plug.
-
-@param plug: The plug the break connections from.
-@param source: Specifies if the source plug should be broken.
-@param destination: Specifies if the destination plugs should be broken.
-@return: Return status;
-*/
-{
-
-	MStatus status;
-
-	// Check if source connections should be broken
-	//
-	if (source)
-	{
-
-		MPlug otherPlug = plug.source();
-
-		if (!otherPlug.isNull())
-		{
-
-			status = PathConstraint::disconnectPlugs(otherPlug, plug);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		}
-
-	}
-	
-	// Check if destination plugs should be broken
-	//
-	if (destination)
-	{
-
-		MPlugArray otherPlugs;
-
-		bool isConnected = plug.destinations(otherPlugs, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		unsigned int numOtherPlugs = otherPlugs.length();
-
-		for (unsigned int i = 0; i < numOtherPlugs; i++)
-		{
-
-			status = PathConstraint::disconnectPlugs(plug, otherPlugs[i]);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		}
-
-	}
-
-	return status;
-
-};
-
-
-MStatus PathConstraint::updateConstraintParentInverseMatrix()
-/**
-Updates the plug connected to the constraintParentInverseMatrix plug.
-This function should be called by the childAdded callback whenever the constraint object's parent is changed.
-This will ensure the correct worldMatrix plug is used.
-
-@return: Return status.
-
-*/
-{
-
-	MStatus status;
-
-	// Check if constraint handle is still alive
-	//
-	if (!this->constraintHandle.isAlive())
-	{
-
-		return MS::kFailure;
-
-	}
-
-	MObject constraintObject = this->constraintHandle.object();
-
-	// Break connections to plug
-	//
-	MPlug constraintParentInverseMatrixPlug = MPlug(this->thisMObject(), PathConstraint::constraintParentInverseMatrix);
-
-	status = PathConstraint::breakConnections(constraintParentInverseMatrixPlug, true, false);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	// Check if constraint object has a parent
-	//
-	MObject parent = PathConstraint::getParentOf(constraintObject);
-
-	if (!parent.isNull())
-	{
-
-		// Initialize function set from dag path
-		//
-		MDagPath dagPath = PathConstraint::getAPathTo(parent);
-
-		MFnDagNode fnDagNode(dagPath, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		// Connect parent's worldInverseMatrix plug to constraintParentInverseMatrix plug
-		// This will bypass any cyclical dependencies from the offsetParentMatrix plug!
-		//
-		MPlug worldInverseMatrixPlug = fnDagNode.findPlug("worldInverseMatrix", false, &status);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		status = worldInverseMatrixPlug.selectAncestorLogicalIndex(dagPath.instanceNumber());
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		status = PathConstraint::connectPlugs(worldInverseMatrixPlug, constraintParentInverseMatrixPlug);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	}
 	else
 	{
-
-		// Reset plug matrix
-		//
-		MObject matrixData = PathConstraint::createMatrixData(MMatrix::identity);
-
-		status = constraintParentInverseMatrixPlug.setMObject(matrixData);
-		CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	}
-
-	return status;
-
-};
-
-
-MObject PathConstraint::createMatrixData(MMatrix matrix)
-/**
-Converts a matrix into a data object compatible with plugs.
-
-@param matrix: The matrix to convert.
-@return: A matrix data object.
-*/
-{
-
-	MFnMatrixData fnMatrixData;
-
-	MObject matrixData = fnMatrixData.create();
-	fnMatrixData.set(matrix);
-
-	return matrixData;
-
-};
-
-
-MMatrix PathConstraint::getMatrixData(MObject& matrixData)
-/**
-Converts a data object into a matrix compatible with plugs.
-
-@param matrixData: The data object to convert.
-@return: A matrix.
-*/
-{
-
-	MFnMatrixData fnMatrixData(matrixData);
-	return fnMatrixData.matrix();
-
-};
-
-
-MDagPath PathConstraint::getAPathTo(MObject& dependNode)
-/**
-Returns the dag path for the supplied dag node.
-
-@param dependNode: The node to get a path to.
-@return: The dag path.
-*/
-{
-
-	// Verify this is a dag node
-	//
-	if (!dependNode.hasFn(MFn::kDagNode))
-	{
-
-		return MDagPath();
-
-	}
-
-	// Get a path to dag node
-	//
-	MDagPath dagPath;
-	MDagPath::getAPathTo(dependNode, dagPath);
-
-	return dagPath;
-
-};
-
-
-MObject PathConstraint::getParentOf(MObject& dependNode)
-/**
-Returns the parent for the supplied dag node.
-
-@param dependNode: The node to get the parent for.
-@return: The parent node.
-*/
-{
-
-	// Verify this is a dag node
-	//
-	if (!dependNode.hasFn(MFn::kDagNode))
-	{
-
-		return MObject::kNullObj;
-
-	}
-
-	// Initialize function set
-	//
-	MDagPath dagPath = PathConstraint::getAPathTo(dependNode);
-	MFnDagNode fnDagNode(dagPath);
-
-	unsigned int parentCount = fnDagNode.parentCount();
-
-	if (parentCount == 1)
-	{
-
-		return fnDagNode.parent(0);
-
-	}
-	else
-	{
-
-		return MObject::kNullObj;
+		
+		return MS::kUnknownParameter;
 
 	}
 
 };
 
 
-MMatrix PathConstraint::createPositionMatrix(MVector position)
+MMatrix PathConstraint::createPositionMatrix(const MVector& position)
 /**
 Creates a position matrix from the given vector.
 
@@ -779,19 +348,19 @@ Creates a position matrix from the given vector.
 */
 {
 
-	double matrix[4][4] = {
+	double rows[4][4] = {
 		{ 1.0, 0.0, 0.0, 0.0 },
 		{ 0.0, 1.0, 0.0, 0.0 },
 		{ 0.0, 0.0, 1.0, 0.0 },
 		{ position.x, position.y, position.z, 1.0 }
 	};
 
-	return MMatrix(matrix);
+	return MMatrix(rows);
 
 };
 
 
-MStatus PathConstraint::createRotationMatrix(int forwardAxis, MAngle angle, MMatrix &matrix)
+MStatus PathConstraint::createRotationMatrix(const int forwardAxis, const MAngle& angle, MMatrix &matrix)
 /**
 Creates a rotation matrix from the given forward axis and angle.
 
@@ -833,101 +402,44 @@ Creates a rotation matrix from the given forward axis and angle.
 };
 
 
-MStatus PathConstraint::getUpVector(MDataBlock& data, double parameter, MObject& curve, MVector& upVector)
+MStatus	PathConstraint::sampleCurveAtParameter(const MObject& curve, const double parameter, const WorldUpSettings& settings, MPoint& position, MVector& forwardVector, MVector& upVector)
 /**
-Returns the up vector based on the selected world up type.
+Samples the supplied curve at the specified parameter.
 
-@param data: Data block containing storage for the node's attributes.
-@param parameter: The curve parameter to sample at.
 @param curve: The curve data object to sample from.
-@param upVector: The passed vector to populate.
+@param parameter: The curve parameter to sample at.
+@param point: The position at the specified parameter.
+@param forwardVector: The forward-vector at the specified parameter.
+@param upVector: The up-vector at the specified parameter.
 @return: Return status.
 */
 {
 
 	MStatus status;
 
-	// Get up vector related data handles
+	// Get curve point
 	//
-	MDataHandle worldUpTypeHandle = data.inputValue(PathConstraint::worldUpType, &status);
+	status = PathConstraint::getCurvePoint(targetCurve, parameter, position);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
-	MDataHandle worldUpVectorHandle = data.inputValue(PathConstraint::worldUpVector, &status);
+	// Get forward-vector
+	//
+	status = PathConstraint::getForwardVector(targetCurve, parameter, forwardVector);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+	
+	// Get up-vector
+	//
+	status = PathConstraint::getUpVector(targetCurve, parameter, settings, position, upVector);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
-	MDataHandle worldUpMatrixHandle = data.inputValue(PathConstraint::worldUpMatrix, &status);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	// Get values from handles
-	//
-	int worldUpType = worldUpTypeHandle.asShort();
-	MVector worldUpVector = worldUpVectorHandle.asVector();
-	MMatrix worldUpMatrix = worldUpMatrixHandle.asMatrix();
-
-	// Check world up type
-	//
-	switch (worldUpType)
-	{
-
-		case 0: // Scene Up
-		{
-
-			upVector = PathConstraint::getSceneUpVector();
-
-		}
-		break;
-
-		case 1: // Object Up
-		{
-
-			upVector = this->getObjectUpVector(worldUpMatrix);
-
-		}
-		break;
-
-		case 2: // Object Rotation Up
-		{
-
-			upVector = PathConstraint::getObjectRotationUpVector(worldUpMatrix, worldUpVector);
-
-		}
-		break;
-
-		case 3: // Vector
-		{
-
-			upVector = MVector(worldUpVector).normal();
-
-		}
-		break;
-
-		case 4: // Curve normal
-		{
-
-			status = PathConstraint::getCurveNormal(curve, parameter, upVector);
-			CHECK_MSTATUS_AND_RETURN_IT(status);
-
-		}
-		break;
-
-		default:
-		{
-
-			return MS::kFailure;
-
-		}
-		break;
-
-	}
-
-	return MS::kSuccess;
+	return status;
 
 };
 
 
-MStatus PathConstraint::getForwardVector(MObject& curve, double parameter, MVector& forwardVector)
+MStatus PathConstraint::getForwardVector(const MObject& curve, const double parameter, MVector& forwardVector)
 /**
-Returns the forward vector at the given percentile.
+Returns the forward vector at the specified parameter.
 
 @param curve: The curve data object to sample from.
 @param parameter: The curve parameter to sample at.
@@ -956,49 +468,87 @@ Returns the forward vector at the given percentile.
 };
 
 
-MVector PathConstraint::getSceneUpVector()
+MStatus PathConstraint::getUpVector(const MObject& curve, const double parameter, const WorldUpSettings& settings, const MVector& position, MVector& upVector)
 /**
-Returns the scene up vector.
+Returns the up vector based on the selected world up type.
 
-@return: MVector
+@param data: Data block containing storage for the node's attributes.
+@param parameter: The curve parameter to sample at.
+@param curve: The curve data object to sample from.
+@param upVector: The passed vector to populate.
+@return: Return status.
 */
 {
 
-	return MGlobal::upAxis();
+	MStatus status;
+
+	// Check world up type
+	//
+	switch (settings.worldUpType)
+	{
+
+		case 0: // Scene Up
+		{
+
+			upVector = MGlobal::upAxis();
+
+		}
+		break;
+
+		case 1: // Object Up
+		{
+
+			upVector = (MVector(position) - MVector(settings.worldUpMatrix[3])).normal();
+
+		}
+		break;
+
+		case 2: // Object Rotation Up
+		{
+
+			upVector = PathConstraint::getObjectRotationUpVector(settings.worldUpVector, settings.worldUpMatrix);
+
+		}
+		break;
+
+		case 3: // Vector
+		{
+
+			upVector = MVector(settings.worldUpVector).normal();
+
+		}
+		break;
+
+		case 4: // Curve normal
+		{
+
+			status = PathConstraint::getCurveNormal(curve, parameter, upVector);
+			CHECK_MSTATUS_AND_RETURN_IT(status);
+
+		}
+		break;
+
+		default:
+		{
+
+			return MS::kFailure;
+
+		}
+		break;
+
+	}
+
+	return MS::kSuccess;
 
 };
 
 
-MVector PathConstraint::getObjectUpVector(MMatrix worldUpMatrix)
+MVector PathConstraint::getObjectRotationUpVector(const MVector& worldUpVector, const MMatrix& worldUpMatrix)
 /**
-Returns the vector between this object and the supplied matrix.
+Returns the weighted up-vector derived from the supplied world-matrix.
 
-@param worldUpMatrix: The world matrix of the up object.
-@return: MVector
-*/
-{
-
-	// Get dag path to this constraint
-	//
-	MDagPath dagPath;
-	MDagPath::getAPathTo(this->thisMObject(), dagPath);
-
-	// Return point in constraint space
-	//
-	MMatrix inclusiveMatrixInverse = dagPath.inclusiveMatrixInverse();
-	MMatrix matrix = worldUpMatrix * inclusiveMatrixInverse;
-
-	return MVector(matrix[3]).normal();
-
-};
-
-
-MVector PathConstraint::getObjectRotationUpVector(MMatrix worldUpMatrix, MVector worldUpVector)
-/**
-Returns the weighted average for the up vector derived from the supplied world matrix.
-
-@param worldUpMatrix: The world matrix of the up object.
 @param worldUpVector: The weighted values to average from.
+@param worldUpMatrix: The world matrix of the up object.
 @return: MVector
 */
 {
@@ -1016,7 +566,7 @@ Returns the weighted average for the up vector derived from the supplied world m
 };
 
 
-MStatus	PathConstraint::getCurvePoint(MObject& curve, double parameter, MPoint& position)
+MStatus	PathConstraint::getCurvePoint(const MObject& curve, const double parameter, MPoint& position)
 /**
 Returns the point on a curve from the given percentile.
 
@@ -1036,7 +586,7 @@ Returns the point on a curve from the given percentile.
 
 	// Return normal at parameter
 	//
-	status = fnCurve.getPointAtParam(parameter, position, MSpace::kWorld);
+	status = fnCurve.getPointAtParam(parameter, position, MSpace::kObject);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	return status;
@@ -1044,7 +594,7 @@ Returns the point on a curve from the given percentile.
 };
 
 
-MStatus	PathConstraint::getCurveNormal(MObject& curve, double parameter, MVector& upVector)
+MStatus	PathConstraint::getCurveNormal(const MObject& curve, const double parameter, MVector& upVector)
 /**
 Returns the tangent normal at the given percentile.
 
@@ -1064,7 +614,7 @@ Returns the tangent normal at the given percentile.
 
 	// Return normal at parameter
 	//
-	upVector = fnCurve.normal(parameter, MSpace::kWorld, &status);
+	upVector = fnCurve.normal(parameter, MSpace::kObject, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	return status;
@@ -1072,7 +622,7 @@ Returns the tangent normal at the given percentile.
 };
 
 
-MStatus PathConstraint::getParamFromFraction(MObject& curve, double fraction, double& parameter)
+MStatus PathConstraint::getParamFromFraction(const MObject& curve, const double fraction, double& parameter)
 /**
 Returns the curve parameter based on the fractional distance across the curve.
 
@@ -1091,12 +641,11 @@ Returns the curve parameter based on the fractional distance across the curve.
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	// Calculate the fractional distance
-	// Also don't forget to clamp the value!!!
 	//
-	fraction = PathConstraint::clamp(fraction, 0.0, 1.0);
+	double normalizedFraction = PathConstraint::clamp(fraction, 0.0, 1.0);
 
 	double curveLength = fnCurve.length();
-	double paramLength = fraction * curveLength;
+	double paramLength = normalizedFraction * curveLength;
 
 	if (paramLength == 0.0)
 	{
@@ -1114,14 +663,15 @@ Returns the curve parameter based on the fractional distance across the curve.
 
 	// Get param from length
 	//
-	parameter = fnCurve.findParamFromLength(paramLength);
+	parameter = fnCurve.findParamFromLength(paramLength, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
 
-	return MS::kSuccess;
+	return status;
 
 };
 
 
-MStatus PathConstraint::composeMatrix(int forwardAxis, MVector forwardVector, int upAxis, MVector upVector, MPoint position, MMatrix &matrix)
+MStatus PathConstraint::composeMatrix(const int forwardAxis, const MVector& forwardVector, const int upAxis, const MVector& upVector, const MPoint& position, MMatrix &matrix)
 /**
 Composes a matrix the given forward/up vector and position.
 Axis enumerator values can be supplied to designate the vectors.
@@ -1361,7 +911,7 @@ Axis enumerator values can be supplied to designate the vectors.
 };
 
 
-MMatrix PathConstraint::composeMatrix(MVector x, MVector y, MVector z, MPoint p)
+MMatrix PathConstraint::composeMatrix(const MVector& xAxis, const MVector& yAxis, const MVector& zAxis, const MPoint& position)
 /**
 Composes a matrix from the axis vectors and position.
 
@@ -1374,10 +924,10 @@ Composes a matrix from the axis vectors and position.
 {
 
 	const double matrixList[4][4] = {
-		{x.x, x.y, x.z, 0.0},
-		{y.x, y.y, y.z, 0.0},
-		{z.x, z.y, z.z, 0.0},
-		{p.x, p.y, p.z, 1.0}
+		{xAxis.x, xAxis.y, xAxis.z, 0.0},
+		{yAxis.x, yAxis.y, yAxis.z, 0.0},
+		{zAxis.x, zAxis.y, zAxis.z, 0.0},
+		{position.x, position.y, position.z, 1.0}
 	};
 
 	return MMatrix(matrixList);
@@ -1401,7 +951,7 @@ Linearly interpolates the two given numbers using the supplied weight.
 };
 
 
-MMatrix PathConstraint::blendMatrices(MMatrix startMatrix, MMatrix endMatrix, float weight)
+MMatrix PathConstraint::blendMatrices(const MMatrix& startMatrix, const MMatrix& endMatrix, const float weight)
 /**
 Interpolates the two given matrices using the supplied weight.
 Both translate and scale will be lerp'd while rotation will be slerp'd.
@@ -1442,7 +992,7 @@ Both translate and scale will be lerp'd while rotation will be slerp'd.
 };
 
 
-MMatrix PathConstraint::blendMatrices(MMatrix restMatrix, MMatrixArray matrices, MFloatArray weights)
+MMatrix PathConstraint::blendMatrices(const MMatrix& restMatrix, const MMatrixArray& matrices, const MFloatArray& weights)
 /**
 Interpolates the supplied matrices using the weight array as a blend aplha.
 The rest matrix is used just in case the weights don't equal 1.
@@ -1464,7 +1014,7 @@ The rest matrix is used just in case the weights don't equal 1.
 		case 0:
 		{
 
-			// Reuse rest matrix
+			// Re-use rest matrix
 			//
 			return MMatrix(restMatrix);
 
@@ -1540,9 +1090,25 @@ The rest matrix is used just in case the weights don't equal 1.
 };
 
 
-MQuaternion PathConstraint::slerp(MQuaternion startQuat, MQuaternion endQuat, float weight)
+double PathConstraint::dot(const MQuaternion& quat, const MQuaternion& otherQuat)
+/**
+Returns the dot product of two quaternions.
+
+@param quat: Quaternion.
+@param: otherQuat: Other quaternion.
+@return: Dot length.
+*/
+{
+
+	return (quat.x * otherQuat.x) + (quat.y * otherQuat.y) + (quat.z * otherQuat.z) + (quat.w * otherQuat.w);
+
+};
+
+
+MQuaternion PathConstraint::slerp(const MQuaternion& startQuat, const MQuaternion& endQuat, const float weight)
 /**
 Spherical interpolates two quaternions.
+See the following for details: https://www.euclideanspace.com/maths/algebra/realNormedAlgebra/quaternions/slerp/index.htm
 
 @param startQuat: Start Quaternion.
 @param endQuat: End Quaternion.
@@ -1551,55 +1117,47 @@ Spherical interpolates two quaternions.
 */
 {
 
-	// Calculate angle between quats
-	// If startQuat == endQuat or startQuat == -endQuat then theta = 0 and we can return startQuat
-	//
-	double cos_half_theta = startQuat.w * endQuat.w + startQuat.x * endQuat.x + startQuat.y * endQuat.y + startQuat.z * endQuat.z;
+	MQuaternion q1 = MQuaternion(startQuat);
+	MQuaternion q2 = MQuaternion(endQuat);
 
-	if (abs(cos_half_theta) >= 1.0)
+	double dot = PathConstraint::dot(q1, q2);
+
+	if (dot < 0.0)
 	{
 
-		return MQuaternion(startQuat);
+		dot = PathConstraint::dot(q1, q2.negateIt());
 
 	}
 
-	// Calculate temporary values
-	// If theta = 180 degrees then result is not fully defined
-	// We could rotate around any axis normal to startQuat or endQuat
-	//
-	MQuaternion quat = MQuaternion();
+	double theta = acos(dot);
+	double sinTheta = sin(theta);
 
-	double half_theta = acos(cos_half_theta);
-	double sin_half_theta = sqrt(1.0 - cos_half_theta * cos_half_theta);
+	double w1, w2;
 
-	if (fabs(sin_half_theta) < 0.001)
+	if (sinTheta > 1e-3)
 	{
 
-		quat.x = startQuat.x * 0.5 + endQuat.x * 0.5;
-		quat.y = startQuat.y * 0.5 + endQuat.y * 0.5;
-		quat.z = startQuat.z * 0.5 + endQuat.z * 0.5;
-		quat.w = startQuat.w * 0.5 + endQuat.w * 0.5;
+		w1 = sin((1.0 - weight) * theta) / sinTheta;
+		w2 = sin(weight * theta) / sinTheta;
 
-		return quat;
+	}
+	else
+	{
+
+		w1 = 1.0 - weight;
+		w2 = weight;
 
 	}
 
-	// Calculate quaternion
-	//
-	double ratio_a = sin((1.0 - weight) * half_theta) / sin_half_theta;
-	double ratio_b = sin(weight * half_theta) / sin_half_theta;
+	q1.scaleIt(w1);
+	q2.scaleIt(w2);
 
-	quat.w = startQuat.w * ratio_a + endQuat.w * ratio_b;
-	quat.x = startQuat.x * ratio_a + endQuat.x * ratio_b;
-	quat.y = startQuat.y * ratio_a + endQuat.y * ratio_b;
-	quat.z = startQuat.z * ratio_a + endQuat.z * ratio_b;
+	return q1 + q2;
 
-	return quat;
-
-}
+};
 
 
-float PathConstraint::sum(MFloatArray items)
+float PathConstraint::sum(const MFloatArray& items)
 /**
 Calculates the sum of all the supplied items.
 
@@ -1625,7 +1183,7 @@ Calculates the sum of all the supplied items.
 };
 
 
-MFloatArray PathConstraint::clamp(MFloatArray items)
+MFloatArray PathConstraint::clamp(const MFloatArray& items)
 /**
 Clamps the supplied items so they don't exceed 1.
 Anything below that is left alone and compensated for using the rest matrix.
@@ -1752,37 +1310,6 @@ See pluginMain.cpp for details.
 
 	return new PathConstraint();
 
-}
-
-
-void PathConstraint::postConstructor()
-/**
-Internally maya creates two objects when a user defined node is created, the internal MObject and the user derived object.
-The association between the these two objects is not made until after the MPxNode constructor is called.
-This implies that no MPxNode member function can be called from the MPxNode constructor.
-The postConstructor will get called immediately after the constructor when it is safe to call any MPxNode member function.
-
-@return: void
-*/
-{
-
-	// Store reference to this instance
-	//
-	this->instances.insert(std::make_pair(this->hashCode(), this));
-
-};
-
-
-long PathConstraint::hashCode()
-/**
-Returns the hash code for this instance.
-
-@return: Hash code.
-*/
-{
-
-	return MObjectHandle(this->thisMObject()).hashCode();
-
 };
 
 
@@ -1846,6 +1373,46 @@ Use this function to define any static attributes.
 	// ".restRotate" attribute
 	//
 	PathConstraint::restRotate = fnNumericAttr.create("restRotate", "rr", PathConstraint::restRotateX, PathConstraint::restRotateY, PathConstraint::restRotateZ, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetTranslateX" attribute
+	//
+	PathConstraint::offsetTranslateX = fnUnitAttr.create("offsetTranslateX", "otx", MFnUnitAttribute::kDistance, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetTranslateY" attribute
+	//
+	PathConstraint::offsetTranslateY = fnUnitAttr.create("offsetTranslateY", "oty", MFnUnitAttribute::kDistance, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetTranslateZ" attribute
+	//
+	PathConstraint::offsetTranslateZ = fnUnitAttr.create("offsetTranslateZ", "otz", MFnUnitAttribute::kDistance, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetTranslate" attribute
+	//
+	PathConstraint::offsetTranslate = fnNumericAttr.create("offsetTranslate", "ot", PathConstraint::offsetTranslateX, PathConstraint::offsetTranslateY, PathConstraint::offsetTranslateZ, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetRotateX" attribute
+	//
+	PathConstraint::offsetRotateX = fnUnitAttr.create("offsetRotateX", "orx", MFnUnitAttribute::kAngle, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetRotateY" attribute
+	//
+	PathConstraint::offsetRotateY = fnUnitAttr.create("offsetRotateY", "ory", MFnUnitAttribute::kAngle, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetRotateZ" attribute
+	//
+	PathConstraint::offsetRotateZ = fnUnitAttr.create("offsetRotateZ", "orz", MFnUnitAttribute::kAngle, 0.0, &status);
+	CHECK_MSTATUS_AND_RETURN_IT(status);
+
+	// ".offsetRotate" attribute
+	//
+	PathConstraint::offsetRotate = fnNumericAttr.create("offsetRotate", "or", PathConstraint::offsetRotateX, PathConstraint::offsetRotateY, PathConstraint::offsetRotateZ, &status);
 	CHECK_MSTATUS_AND_RETURN_IT(status);
 
 	// ".uValue" attribute
@@ -2089,18 +1656,12 @@ Use this function to define any static attributes.
 
 	CHECK_MSTATUS(fnMatrixAttr.addToCategory(PathConstraint::outputCategory));
 
-	// ".constraintObject" attribute
-	//
-	PathConstraint::constraintObject = fnMessageAttr.create("constraintObject", "co", &status);
-	CHECK_MSTATUS_AND_RETURN_IT(status);
-
-	CHECK_MSTATUS(fnMessageAttr.setWritable(true));
-	CHECK_MSTATUS(fnMessageAttr.setStorable(true));
-
 	// Add attributes
 	//
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::restTranslate));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::restRotate));
+	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::offsetTranslate));
+	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::offsetRotate));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::uValue));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::fractionMode));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::forwardAxis));
@@ -2118,7 +1679,6 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::constraintWorldMatrix));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::constraintWorldInverseMatrix));
 	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::constraintParentInverseMatrix));
-	CHECK_MSTATUS(PathConstraint::addAttribute(PathConstraint::constraintObject));
 
 	// Define target attribute relationships
 	//
@@ -2160,6 +1720,18 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::restRotateX, PathConstraint::constraintRotateX));
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::restRotateY, PathConstraint::constraintRotateY));
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::restRotateZ, PathConstraint::constraintRotateZ));
+
+	// Define offset attribute relationships
+	//
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetTranslate, PathConstraint::constraintTranslate));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetTranslateX, PathConstraint::constraintTranslateX));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetTranslateY, PathConstraint::constraintTranslateY));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetTranslateZ, PathConstraint::constraintTranslateZ));
+
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetRotate, PathConstraint::constraintRotate));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetRotateX, PathConstraint::constraintRotateX));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetRotateY, PathConstraint::constraintRotateY));
+	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::offsetRotateZ, PathConstraint::constraintRotateZ));
 
 	// Define constraint attribute relationships
 	//
@@ -2208,10 +1780,6 @@ Use this function to define any static attributes.
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::worldUpMatrix, PathConstraint::constraintRotateX));
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::worldUpMatrix, PathConstraint::constraintRotateY));
 	CHECK_MSTATUS(PathConstraint::attributeAffects(PathConstraint::worldUpMatrix, PathConstraint::constraintRotateZ));
-
-	// Create child added callback
-	//
-	PathConstraint::childAddedCallbackId = MDagMessage::addChildAddedCallback(onChildAdded);
 
 	return status;
 

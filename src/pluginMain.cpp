@@ -5,7 +5,6 @@
 //
 
 #include "PathConstraint.h"
-
 #include <maya/MFnPlugin.h>
 
 
@@ -42,16 +41,6 @@ MStatus uninitializePlugin(MObject obj)
 	{
 
 		status.perror("deregisterNode");
-		return status;
-
-	}
-
-	status = MDagMessage::removeCallback(PathConstraint::childAddedCallbackId);
-
-	if (!status)
-	{
-
-		status.perror("removeCallback");
 		return status;
 
 	}
